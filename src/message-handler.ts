@@ -1,12 +1,32 @@
-import { Client, Message } from 'whatsapp-web.js';
+import { WhatsAppAPI } from './whatsapp-api';
 import { ReminderDatabase } from './database';
 import {
   parseTime,
   getTimeSuggestions,
-  formatTimeSuggestions,
   formatDateTime,
   formatRelativeTime,
+  TimeSuggestion,
 } from './time-parser';
+
+// Webhook payload types
+export interface WebhookMessage {
+  from: string; // sender's phone number
+  id: string; // message ID
+  timestamp: string;
+  type: 'text' | 'interactive' | 'button' | 'image' | 'document' | 'audio' | 'video' | 'sticker' | 'location' | 'contacts';
+  text?: { body: string };
+  interactive?: {
+    type: 'button_reply' | 'list_reply';
+    button_reply?: { id: string; title: string };
+    list_reply?: { id: string; title: string; description?: string };
+  };
+  context?: {
+    from: string;
+    id: string;
+    forwarded?: boolean;
+    frequently_forwarded?: boolean;
+  };
+}
 
 interface PendingReminder {
   message: string;
@@ -15,101 +35,138 @@ interface PendingReminder {
 }
 
 export class MessageHandler {
-  private client: Client;
+  private api: WhatsAppAPI;
   private db: ReminderDatabase;
   private pendingReminders: Map<string, PendingReminder> = new Map();
   private readonly PENDING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-  constructor(client: Client, db: ReminderDatabase) {
-    this.client = client;
+  constructor(api: WhatsAppAPI, db: ReminderDatabase) {
+    this.api = api;
     this.db = db;
 
     // Clean up expired pending reminders periodically
     setInterval(() => this.cleanupExpiredPending(), 60000);
   }
 
-  async handleMessage(message: Message): Promise<void> {
+  async handleMessage(message: WebhookMessage): Promise<void> {
     try {
-      // Get the chat to determine if it's a private chat with the bot
-      const chat = await message.getChat();
-      const contact = await message.getContact();
-      const userId = contact.id._serialized;
-      const chatId = chat.id._serialized;
+      const userId = message.from;
 
-      // Only respond in private chats (not groups)
-      if (chat.isGroup) {
+      // Mark message as read
+      await this.api.markAsRead(message.id);
+
+      // Handle interactive button/list responses
+      if (message.type === 'interactive' && message.interactive) {
+        await this.handleInteractiveResponse(message, userId);
         return;
       }
 
-      const body = message.body.trim();
+      // Handle text messages
+      if (message.type !== 'text' || !message.text) {
+        await this.api.sendTextMessage(
+          userId,
+          "I can only handle text messages. Send me a message you'd like to be reminded about!"
+        );
+        return;
+      }
+
+      const body = message.text.body.trim();
 
       // Check if user has a pending reminder waiting for time
       if (this.pendingReminders.has(userId)) {
-        await this.handleTimeSelection(message, userId, chatId, body);
+        await this.handleTimeSelection(userId, body);
         return;
       }
 
       // Handle commands
-      if (body.toLowerCase() === '/help' || body.toLowerCase() === 'help') {
-        await this.sendHelp(message);
+      const lowerBody = body.toLowerCase();
+
+      if (lowerBody === '/help' || lowerBody === 'help') {
+        await this.sendHelp(userId);
         return;
       }
 
-      if (body.toLowerCase() === '/list' || body.toLowerCase() === 'list') {
-        await this.listReminders(message, userId);
+      if (lowerBody === '/list' || lowerBody === 'list') {
+        await this.listReminders(userId);
         return;
       }
 
-      if (body.toLowerCase() === '/cancel' || body.toLowerCase() === 'cancel') {
-        await message.reply('No pending reminder to cancel.');
+      if (lowerBody === '/cancel' || lowerBody === 'cancel') {
+        await this.api.sendTextMessage(userId, 'No pending reminder to cancel.');
         return;
       }
 
       // Check for delete command: /delete <id>
       const deleteMatch = body.match(/^\/delete\s+(\d+)$/i);
       if (deleteMatch) {
-        await this.deleteReminder(message, userId, parseInt(deleteMatch[1], 10));
+        await this.deleteReminder(userId, parseInt(deleteMatch[1], 10));
         return;
       }
 
-      // Check if this is a forwarded message
-      if (message.hasQuotedMsg || message.isForwarded) {
-        await this.handleForwardedMessage(message, userId);
-        return;
-      }
+      // Check if this is a forwarded message (has context)
+      const isForwarded = message.context?.forwarded || message.context?.frequently_forwarded;
 
-      // Treat any other message as something to be reminded about
-      await this.startReminderFlow(message, userId, body, null);
+      // Start the reminder flow
+      await this.startReminderFlow(userId, body, isForwarded ? 'Forwarded message' : null);
     } catch (error) {
       console.error('Error handling message:', error);
     }
   }
 
-  private async handleForwardedMessage(message: Message, userId: string): Promise<void> {
-    let reminderText: string;
-    let originalSender: string | null = null;
+  private async handleInteractiveResponse(message: WebhookMessage, userId: string): Promise<void> {
+    const interactive = message.interactive!;
+    let selectedId: string | undefined;
 
-    if (message.hasQuotedMsg) {
-      // Message is a reply/quote
-      const quotedMsg = await message.getQuotedMessage();
-      reminderText = quotedMsg.body;
-
-      try {
-        const quotedContact = await quotedMsg.getContact();
-        originalSender = quotedContact.pushname || quotedContact.number;
-      } catch {
-        // Ignore if we can't get the contact
-      }
-    } else {
-      // Message is forwarded
-      reminderText = message.body;
+    if (interactive.type === 'button_reply' && interactive.button_reply) {
+      selectedId = interactive.button_reply.id;
+    } else if (interactive.type === 'list_reply' && interactive.list_reply) {
+      selectedId = interactive.list_reply.id;
     }
 
-    await this.startReminderFlow(message, userId, reminderText, originalSender);
+    if (!selectedId) {
+      return;
+    }
+
+    // Check if it's a cancel action
+    if (selectedId === 'cancel') {
+      this.pendingReminders.delete(userId);
+      await this.api.sendTextMessage(userId, 'Reminder cancelled.');
+      return;
+    }
+
+    // Check if it's a time selection
+    if (selectedId.startsWith('time_')) {
+      const pending = this.pendingReminders.get(userId);
+      if (!pending) {
+        await this.api.sendTextMessage(userId, 'No pending reminder found. Send me a message to create one.');
+        return;
+      }
+
+      const shortcut = selectedId.replace('time_', '');
+      const suggestions = getTimeSuggestions();
+      const suggestion = suggestions.find((s) => s.shortcut === shortcut);
+
+      if (suggestion) {
+        await this.createReminder(userId, pending, suggestion.value);
+      }
+      return;
+    }
+
+    // Check if it's a custom time request
+    if (selectedId === 'custom_time') {
+      await this.api.sendTextMessage(
+        userId,
+        'Type your custom time. Examples:\n' +
+          '• "in 30 minutes"\n' +
+          '• "tomorrow at 2pm"\n' +
+          '• "next friday at 10am"\n' +
+          '• "jan 15 at 3:30pm"'
+      );
+      return;
+    }
   }
 
   private async startReminderFlow(
-    message: Message,
     userId: string,
     reminderText: string,
     originalSender: string | null
@@ -121,23 +178,42 @@ export class MessageHandler {
       timestamp: Date.now(),
     });
 
-    // Send time selection options
+    // Get time suggestions
     const suggestions = getTimeSuggestions();
-    const suggestionText = formatTimeSuggestions(suggestions);
+    const previewText =
+      reminderText.length > 100 ? reminderText.substring(0, 100) + '...' : reminderText;
 
-    const previewText = reminderText.length > 100 ? reminderText.substring(0, 100) + '...' : reminderText;
+    // Send interactive list with time options
+    const bodyText = `*Set a reminder for:*\n"${previewText}"\n\nWhen should I remind you?`;
 
-    const response = `*Set a reminder for:*\n"${previewText}"\n\n*When should I remind you?*\n\n${suggestionText}\n\n_Reply with a number (1-6) or type a custom time. Send "cancel" to cancel._`;
-
-    await message.reply(response);
+    await this.api.sendInteractiveList(userId, bodyText, 'Choose Time', [
+      {
+        title: 'Quick Options',
+        rows: suggestions.slice(0, 6).map((s) => ({
+          id: `time_${s.shortcut}`,
+          title: s.label,
+          description: formatDateTime(s.value),
+        })),
+      },
+      {
+        title: 'Other',
+        rows: [
+          {
+            id: 'custom_time',
+            title: 'Custom time',
+            description: 'Type your own time',
+          },
+          {
+            id: 'cancel',
+            title: 'Cancel',
+            description: 'Cancel this reminder',
+          },
+        ],
+      },
+    ]);
   }
 
-  private async handleTimeSelection(
-    message: Message,
-    userId: string,
-    chatId: string,
-    input: string
-  ): Promise<void> {
+  private async handleTimeSelection(userId: string, input: string): Promise<void> {
     const pending = this.pendingReminders.get(userId);
     if (!pending) {
       return;
@@ -146,7 +222,7 @@ export class MessageHandler {
     // Check for cancel
     if (input.toLowerCase() === 'cancel' || input.toLowerCase() === '/cancel') {
       this.pendingReminders.delete(userId);
-      await message.reply('Reminder cancelled.');
+      await this.api.sendTextMessage(userId, 'Reminder cancelled.');
       return;
     }
 
@@ -169,25 +245,34 @@ export class MessageHandler {
 
     // Validate the time
     if (!selectedTime) {
-      await message.reply(
-        "I couldn't understand that time. Please try again with something like:\n" +
-          '- "in 30 minutes"\n' +
-          '- "tomorrow at 2pm"\n' +
-          '- "next friday at 10am"\n\n' +
-          'Or reply with a number (1-6) for a quick option.'
+      await this.api.sendTextMessage(
+        userId,
+        "I couldn't understand that time. Please try again:\n" +
+          '• "in 30 minutes"\n' +
+          '• "tomorrow at 2pm"\n' +
+          '• "next friday at 10am"\n\n' +
+          'Or tap "Choose Time" above to pick an option.'
       );
       return;
     }
 
     // Check if the time is in the past
     if (selectedTime.getTime() <= Date.now()) {
-      await message.reply("That time is in the past. Please choose a future time.");
+      await this.api.sendTextMessage(userId, "That time is in the past. Please choose a future time.");
       return;
     }
 
+    await this.createReminder(userId, pending, selectedTime);
+  }
+
+  private async createReminder(
+    userId: string,
+    pending: PendingReminder,
+    selectedTime: Date
+  ): Promise<void> {
     // Create the reminder
     const reminder = this.db.addReminder(
-      chatId,
+      userId,
       userId,
       pending.message,
       selectedTime,
@@ -201,46 +286,42 @@ export class MessageHandler {
     const formattedTime = formatDateTime(selectedTime);
     const relativeTime = formatRelativeTime(selectedTime);
 
-    await message.reply(
-      `*Reminder set!*\n\n` +
+    await this.api.sendTextMessage(
+      userId,
+      `✓ *Reminder set!*\n\n` +
         `I'll remind you ${relativeTime}\n` +
         `_${formattedTime}_\n\n` +
-        `Reminder ID: #${reminder.id}`
+        `ID: #${reminder.id}`
     );
   }
 
-  private async sendHelp(message: Message): Promise<void> {
+  private async sendHelp(userId: string): Promise<void> {
     const helpText = `*WhatsApp Reminder Bot*
 
 *How to create a reminder:*
-1. Forward a message to me, or
-2. Simply send me any text
-
-I'll then ask you when you want to be reminded.
+Send me any message and I'll ask you when you want to be reminded.
 
 *Commands:*
-- *help* - Show this help message
-- *list* - Show your pending reminders
-- */delete <id>* - Delete a reminder by ID
-- *cancel* - Cancel the current reminder setup
+• *help* - Show this help
+• *list* - Show pending reminders
+• */delete <id>* - Delete a reminder
+• *cancel* - Cancel current setup
 
 *Time formats I understand:*
-- "in 30 minutes"
-- "in 2 hours"
-- "tomorrow at 9am"
-- "next monday at 2pm"
-- "jan 15 at 3:30pm"
-- "3h" (3 hours)
-- "1d" (1 day)`;
+• "in 30 minutes"
+• "in 2 hours"
+• "tomorrow at 9am"
+• "next monday at 2pm"
+• "jan 15 at 3:30pm"`;
 
-    await message.reply(helpText);
+    await this.api.sendTextMessage(userId, helpText);
   }
 
-  private async listReminders(message: Message, userId: string): Promise<void> {
+  private async listReminders(userId: string): Promise<void> {
     const reminders = this.db.getUserReminders(userId);
 
     if (reminders.length === 0) {
-      await message.reply("You don't have any pending reminders.");
+      await this.api.sendTextMessage(userId, "You don't have any pending reminders.");
       return;
     }
 
@@ -258,25 +339,27 @@ I'll then ask you when you want to be reminded.
 
     lines.push('_Use /delete <id> to remove a reminder_');
 
-    await message.reply(lines.join('\n'));
+    await this.api.sendTextMessage(userId, lines.join('\n'));
   }
 
-  private async deleteReminder(message: Message, userId: string, reminderId: number): Promise<void> {
-    // Get user's reminders to verify ownership
+  private async deleteReminder(userId: string, reminderId: number): Promise<void> {
     const reminders = this.db.getUserReminders(userId);
     const reminder = reminders.find((r) => r.id === reminderId);
 
     if (!reminder) {
-      await message.reply(`Reminder #${reminderId} not found or doesn't belong to you.`);
+      await this.api.sendTextMessage(
+        userId,
+        `Reminder #${reminderId} not found or doesn't belong to you.`
+      );
       return;
     }
 
     const deleted = this.db.deleteReminder(reminderId);
 
     if (deleted) {
-      await message.reply(`Reminder #${reminderId} has been deleted.`);
+      await this.api.sendTextMessage(userId, `✓ Reminder #${reminderId} deleted.`);
     } else {
-      await message.reply(`Failed to delete reminder #${reminderId}.`);
+      await this.api.sendTextMessage(userId, `Failed to delete reminder #${reminderId}.`);
     }
   }
 

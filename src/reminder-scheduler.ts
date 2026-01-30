@@ -1,15 +1,15 @@
-import { Client } from 'whatsapp-web.js';
+import { WhatsAppAPI } from './whatsapp-api';
 import { ReminderDatabase, Reminder } from './database';
 import { formatDateTime } from './time-parser';
 
 export class ReminderScheduler {
-  private client: Client;
+  private api: WhatsAppAPI;
   private db: ReminderDatabase;
   private checkInterval: NodeJS.Timeout | null = null;
   private readonly CHECK_INTERVAL_MS = 30000; // Check every 30 seconds
 
-  constructor(client: Client, db: ReminderDatabase) {
-    this.client = client;
+  constructor(api: WhatsAppAPI, db: ReminderDatabase) {
+    this.api = api;
     this.db = db;
   }
 
@@ -37,6 +37,10 @@ export class ReminderScheduler {
     try {
       const dueReminders = this.db.getDueReminders();
 
+      if (dueReminders.length > 0) {
+        console.log(`Found ${dueReminders.length} due reminder(s)`);
+      }
+
       for (const reminder of dueReminders) {
         await this.sendReminder(reminder);
       }
@@ -49,19 +53,19 @@ export class ReminderScheduler {
     try {
       const message = this.formatReminderMessage(reminder);
 
-      await this.client.sendMessage(reminder.chatId, message);
+      await this.api.sendTextMessage(reminder.userId, message);
 
       this.db.markAsSent(reminder.id);
-      console.log(`Sent reminder ${reminder.id} to ${reminder.chatId}`);
+      console.log(`Sent reminder #${reminder.id} to ${reminder.userId}`);
     } catch (error) {
-      console.error(`Failed to send reminder ${reminder.id}:`, error);
+      console.error(`Failed to send reminder #${reminder.id}:`, error);
     }
   }
 
   private formatReminderMessage(reminder: Reminder): string {
     const lines: string[] = [];
 
-    lines.push('*Reminder*');
+    lines.push('⏰ *Reminder*');
     lines.push('');
 
     if (reminder.originalSender) {

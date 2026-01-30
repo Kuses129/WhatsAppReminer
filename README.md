@@ -2,28 +2,67 @@
 
 A WhatsApp bot that reminds you of messages - just like Slack's "Remind Me" feature!
 
+Built with the **official WhatsApp Cloud API** for reliability and scalability.
+
 ## Features
 
 - **Forward any message** to the bot and set a reminder
-- **Quick time suggestions** - Choose from preset options (20 min, 1 hour, 3 hours, tomorrow, etc.)
+- **Interactive time picker** - Tap to choose from preset options
 - **Natural language time parsing** - "in 30 minutes", "tomorrow at 2pm", "next friday at 10am"
 - **Persistent storage** - Reminders survive bot restarts (SQLite database)
-- **Manage reminders** - List and delete your pending reminders
+- **Scalable** - Uses official Meta API, handles unlimited users
 
 ## How It Works
 
 1. Send any message to the bot (or forward a message from another chat)
-2. The bot asks when you want to be reminded with quick options
-3. Choose a preset time or type a custom time
+2. Bot shows an interactive menu with time options
+3. Tap a preset time or type a custom time
 4. When the time comes, the bot sends you the reminder!
 
 ## Prerequisites
 
 - Node.js 18 or higher
-- A WhatsApp account
-- Chrome/Chromium (automatically managed by puppeteer)
+- A Meta Developer account
+- A publicly accessible server (for webhooks)
 
-## Installation
+## Setup Guide
+
+### Step 1: Create a Meta Developer App
+
+1. Go to [Meta for Developers](https://developers.facebook.com/)
+2. Click "My Apps" → "Create App"
+3. Select "Business" as the app type
+4. Fill in the app name and click "Create App"
+
+### Step 2: Add WhatsApp to Your App
+
+1. In your app dashboard, find "Add Products"
+2. Click "Set up" on WhatsApp
+3. You'll see the WhatsApp Getting Started page
+
+### Step 3: Get Your Credentials
+
+On the WhatsApp > API Setup page, you'll find:
+
+1. **Phone number ID** - Under "From" phone number, click the dropdown and note the Phone Number ID
+2. **Access Token** - Click "Generate" to create a temporary access token (valid for 24 hours)
+   - For production, create a permanent System User token (see Meta docs)
+
+### Step 4: Configure Webhook
+
+Your server needs to be publicly accessible. Options:
+- **Development**: Use [ngrok](https://ngrok.com/) to expose localhost
+- **Production**: Deploy to a cloud server (AWS, DigitalOcean, Railway, etc.)
+
+1. Start the bot (see below) or use ngrok: `ngrok http 3000`
+2. In Meta App Dashboard, go to WhatsApp > Configuration
+3. Click "Edit" on Webhooks
+4. Enter your webhook URL: `https://YOUR_DOMAIN/webhook`
+5. Enter your verify token (same as `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in .env)
+6. Click "Verify and Save"
+7. Subscribe to "messages" webhook field
+
+### Step 5: Install and Run
 
 ```bash
 # Clone the repository
@@ -33,53 +72,64 @@ cd WhatsAppReminer
 # Install dependencies
 npm install
 
-# Build the project
-npm run build
+# Copy environment file and fill in your credentials
+cp .env.example .env
+# Edit .env with your values
 
-# Start the bot
+# Build and run
+npm run build
 npm start
 ```
 
-## First Run
+### Step 6: Test the Bot
 
-On the first run, a QR code will appear in your terminal:
+1. In Meta App Dashboard, go to WhatsApp > API Setup
+2. Add your phone number as a test recipient
+3. Send a message to the test number shown in the dashboard
+4. The bot should respond with time options!
 
-1. Open WhatsApp on your phone
-2. Go to Settings > Linked Devices > Link a Device
-3. Scan the QR code
-4. The bot is now connected!
+## Environment Variables
 
-Your session is saved locally, so you won't need to scan again unless you log out.
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `WHATSAPP_ACCESS_TOKEN` | Your WhatsApp API access token | Yes |
+| `WHATSAPP_PHONE_NUMBER_ID` | Your WhatsApp phone number ID | Yes |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | A secret string you create for webhook verification | Yes |
+| `PORT` | Server port (default: 3000) | No |
+| `HOST` | Server host (default: 0.0.0.0) | No |
+| `DATABASE_PATH` | SQLite database path (default: ./reminders.db) | No |
 
 ## Usage
 
 ### Creating a Reminder
 
-**Option 1: Send a message directly**
+Send any text message to the bot:
+
 ```
 You: Buy groceries
+
 Bot: *Set a reminder for:*
      "Buy groceries"
 
-     *When should I remind you?*
+     When should I remind you?
 
-     *1*. In 20 minutes (Tue, Jan 28, 10:30 AM)
-     *2*. In 1 hour (Tue, Jan 28, 11:10 AM)
-     ...
-
-You: 2
-Bot: *Reminder set!*
-     I'll remind you in 1 hour
+     [Choose Time button - shows interactive list]
 ```
 
-**Option 2: Forward a message**
-Simply forward any message from another chat to the bot, and it will ask when to remind you.
+Tap "Choose Time" to see options:
+- In 20 minutes
+- In 1 hour
+- In 3 hours
+- Tomorrow at 9:00 AM
+- Next Monday at 9:00 AM
+- In 1 week
+- Custom time
+- Cancel
 
 ### Time Formats
 
-The bot understands various time formats:
-
-- Quick shortcuts: `1`, `2`, `3`, `4`, `5`, `6`
+The bot understands:
+- Quick shortcuts: Tap from the interactive list
 - Relative: `in 30 minutes`, `in 2 hours`, `in 3 days`
 - Short form: `30m`, `2h`, `1d`, `1w`
 - Absolute: `tomorrow at 9am`, `next monday at 2pm`
@@ -99,11 +149,14 @@ The bot understands various time formats:
 ```
 WhatsAppReminer/
 ├── src/
-│   ├── index.ts           # Main entry point
+│   ├── index.ts           # Express server & webhook handling
+│   ├── config.ts          # Environment configuration
+│   ├── whatsapp-api.ts    # WhatsApp Cloud API client
 │   ├── database.ts        # SQLite database for reminders
-│   ├── message-handler.ts # Handles incoming messages
+│   ├── message-handler.ts # Message processing logic
 │   ├── reminder-scheduler.ts # Sends reminders when due
 │   └── time-parser.ts     # Natural language time parsing
+├── .env.example
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -112,7 +165,7 @@ WhatsAppReminer/
 ## Development
 
 ```bash
-# Run in development mode with ts-node
+# Run in development mode
 npm run dev
 
 # Build TypeScript
@@ -122,18 +175,56 @@ npm run build
 npm start
 ```
 
-## How the Bot Works Internally
+## Production Deployment
 
-1. **Message Handler**: When you send a message, it's stored as a "pending reminder" and you're prompted for a time
-2. **Time Parser**: Uses chrono-node for natural language parsing plus custom patterns
-3. **Database**: SQLite stores all reminders with their scheduled times
-4. **Scheduler**: Checks every 30 seconds for due reminders and sends them
+### Using Docker
 
-## Limitations
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY dist ./dist
+CMD ["node", "dist/index.js"]
+```
 
-- Only works in private chats (not groups)
-- Requires the bot to be running for reminders to be sent
-- WhatsApp Web session may need re-authentication periodically
+### Permanent Access Token
+
+For production, create a System User token:
+1. Go to Business Settings > System Users
+2. Create a new System User
+3. Add the WhatsApp app with full_control permission
+4. Generate a token - this won't expire
+
+### Scaling Considerations
+
+- **Database**: For high volume, migrate from SQLite to PostgreSQL
+- **Horizontal scaling**: Use Redis for session state to run multiple instances
+- **Rate limits**: Cloud API has generous limits, but implement backoff for errors
+
+## Pricing
+
+WhatsApp Cloud API pricing (as of 2024):
+- **Free**: First 1,000 conversations per month
+- **User-initiated**: ~$0.005-0.08 per conversation (varies by country)
+- **Business-initiated**: ~$0.03-0.15 per conversation
+
+A "conversation" is a 24-hour messaging window, not per message.
+
+## Troubleshooting
+
+### Webhook not receiving messages
+- Ensure your server is publicly accessible
+- Check that you've subscribed to the "messages" field
+- Verify the webhook token matches your .env
+
+### "Invalid access token" error
+- Temporary tokens expire after 24 hours
+- Generate a new token or set up a System User token
+
+### Bot not responding
+- Check server logs for errors
+- Ensure the phone number is added to test recipients (for sandbox)
 
 ## License
 
