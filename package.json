@@ -1,0 +1,35 @@
+{
+  "name": "whatsapp-reminder-bot",
+  "version": "3.0.0",
+  "description": "A WhatsApp reminder bot using Twilio - no business verification needed",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "whatsapp",
+    "reminder",
+    "bot",
+    "twilio"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chrono-node": "^2.7.5",
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "sql.js": "^1.10.0",
+    "twilio": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.16",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
