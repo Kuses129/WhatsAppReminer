@@ -2,67 +2,100 @@
 
 A WhatsApp bot that reminds you of messages - just like Slack's "Remind Me" feature!
 
-Built with the **official WhatsApp Cloud API** for reliability and scalability.
-
-## Features
-
-- **Forward any message** to the bot and set a reminder
-- **Interactive time picker** - Tap to choose from preset options
-- **Natural language time parsing** - "in 30 minutes", "tomorrow at 2pm", "next friday at 10am"
-- **Persistent storage** - Reminders survive bot restarts (SQLite database)
-- **Scalable** - Uses official Meta API, handles unlimited users
+Built with **Twilio** - no business verification, no extra phone needed.
 
 ## How It Works
 
-1. Send any message to the bot (or forward a message from another chat)
-2. Bot shows an interactive menu with time options
-3. Tap a preset time or type a custom time
-4. When the time comes, the bot sends you the reminder!
+1. You message the bot on WhatsApp
+2. Bot asks when you want to be reminded
+3. Pick a time (or type a custom one)
+4. Bot sends you the reminder when the time comes!
 
-## Prerequisites
+---
 
-- Node.js 18 or higher
-- A Meta Developer account
-- A publicly accessible server (for webhooks)
+## Setup Guide (Step by Step)
 
-## Setup Guide
+### Step 1: Create a Twilio Account
 
-### Step 1: Create a Meta Developer App
+1. Go to **https://www.twilio.com/try-twilio**
+2. Click **"Sign up"**
+3. Fill in your details:
+   - Email
+   - Password
+   - First name, Last name
+4. Verify your email (check inbox, click the link)
+5. Verify your phone number (Twilio sends a code)
 
-1. Go to [Meta for Developers](https://developers.facebook.com/)
-2. Click "My Apps" → "Create App"
-3. Select "Business" as the app type
-4. Fill in the app name and click "Create App"
+You now have **$15 free credit** to test with!
 
-### Step 2: Add WhatsApp to Your App
+---
 
-1. In your app dashboard, find "Add Products"
-2. Click "Set up" on WhatsApp
-3. You'll see the WhatsApp Getting Started page
+### Step 2: Get Your Twilio Credentials
 
-### Step 3: Get Your Credentials
+1. After signing up, you'll land on the **Twilio Console**
+2. Look at the **"Account Info"** section on the dashboard
+3. You'll see:
+   - **Account SID** - starts with `AC` (copy this)
+   - **Auth Token** - click "Show" to reveal, then copy
 
-On the WhatsApp > API Setup page, you'll find:
+Save these somewhere - you'll need them soon.
 
-1. **Phone number ID** - Under "From" phone number, click the dropdown and note the Phone Number ID
-2. **Access Token** - Click "Generate" to create a temporary access token (valid for 24 hours)
-   - For production, create a permanent System User token (see Meta docs)
+---
 
-### Step 4: Configure Webhook
+### Step 3: Activate WhatsApp Sandbox
 
-Your server needs to be publicly accessible. Options:
-- **Development**: Use [ngrok](https://ngrok.com/) to expose localhost
-- **Production**: Deploy to a cloud server (AWS, DigitalOcean, Railway, etc.)
+1. In the Twilio Console, click the search bar at the top
+2. Type **"WhatsApp"** and select **"Messaging > Try it out > Send a WhatsApp message"**
+   - Or go directly to: **https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn**
+3. You'll see the **WhatsApp Sandbox** page
+4. It shows a phone number like **+1 415 523 8886**
+5. It also shows a code like **"join <something-something>"**
 
-1. Start the bot (see below) or use ngrok: `ngrok http 3000`
-2. In Meta App Dashboard, go to WhatsApp > Configuration
-3. Click "Edit" on Webhooks
-4. Enter your webhook URL: `https://YOUR_DOMAIN/webhook`
-5. Enter your verify token (same as `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in .env)
-6. Click "Verify and Save"
-7. Subscribe to "messages" webhook field
+**Now, on your personal phone:**
+1. Open WhatsApp
+2. Add **+1 415 523 8886** (or the number shown) as a contact
+3. Send the message: `join <the-code-shown>` (e.g., `join hungry-cat`)
+4. You'll get a reply: "You're connected to the sandbox!"
 
-### Step 5: Install and Run
+**Congratulations!** You've linked your phone to the Twilio sandbox.
+
+---
+
+### Step 4: Install ngrok
+
+ngrok creates a public URL for your local server (so Twilio can reach it).
+
+**Option A: Download from website**
+1. Go to **https://ngrok.com**
+2. Sign up for free
+3. Download for your OS
+4. Unzip and install
+
+**Option B: Install via npm**
+```bash
+npm install -g ngrok
+```
+
+**Option C: Install via package manager**
+```bash
+# macOS
+brew install ngrok
+
+# Linux (snap)
+sudo snap install ngrok
+```
+
+**Get your ngrok auth token:**
+1. Go to **https://dashboard.ngrok.com/get-started/your-authtoken**
+2. Copy your authtoken
+3. Run this command:
+```bash
+ngrok config add-authtoken YOUR_TOKEN_HERE
+```
+
+---
+
+### Step 5: Download and Configure the Bot
 
 ```bash
 # Clone the repository
@@ -72,159 +105,192 @@ cd WhatsAppReminer
 # Install dependencies
 npm install
 
-# Copy environment file and fill in your credentials
+# Create your config file
 cp .env.example .env
-# Edit .env with your values
+```
 
-# Build and run
+**Edit the `.env` file** with your Twilio credentials:
+```
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_auth_token_here
+TWILIO_WHATSAPP_NUMBER=+14155238886
+```
+
+- `TWILIO_ACCOUNT_SID` = Your Account SID from Step 2
+- `TWILIO_AUTH_TOKEN` = Your Auth Token from Step 2
+- `TWILIO_WHATSAPP_NUMBER` = The sandbox number from Step 3 (usually +14155238886)
+
+---
+
+### Step 6: Start the Bot
+
+**Terminal 1 - Start the bot:**
+```bash
 npm run build
 npm start
 ```
 
-### Step 6: Test the Bot
+You should see:
+```
+WhatsApp Reminder Bot (Twilio)
+==============================
 
-1. In Meta App Dashboard, go to WhatsApp > API Setup
-2. Add your phone number as a test recipient
-3. Send a message to the test number shown in the dashboard
-4. The bot should respond with time options!
+Database initialized
+Twilio client initialized
 
-## Environment Variables
+Server listening on http://0.0.0.0:3000
+```
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `WHATSAPP_ACCESS_TOKEN` | Your WhatsApp API access token | Yes |
-| `WHATSAPP_PHONE_NUMBER_ID` | Your WhatsApp phone number ID | Yes |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | A secret string you create for webhook verification | Yes |
-| `PORT` | Server port (default: 3000) | No |
-| `HOST` | Server host (default: 0.0.0.0) | No |
-| `DATABASE_PATH` | SQLite database path (default: ./reminders.db) | No |
+**Terminal 2 - Start ngrok:**
+```bash
+ngrok http 3000
+```
+
+You'll see something like:
+```
+Forwarding    https://abc123.ngrok-free.app -> http://localhost:3000
+```
+
+**Copy that `https://....ngrok-free.app` URL!**
+
+---
+
+### Step 7: Configure Twilio Webhook
+
+1. Go back to Twilio Console
+2. Navigate to: **Messaging > Try it out > Send a WhatsApp message**
+   - Or: https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn
+3. Scroll down to **"Sandbox Configuration"** (or click the "Sandbox settings" link)
+4. Find **"When a message comes in"**
+5. Enter your ngrok URL + `/webhook`:
+   ```
+   https://abc123.ngrok-free.app/webhook
+   ```
+6. Make sure the method is **POST**
+7. Click **"Save"**
+
+---
+
+### Step 8: Test It!
+
+1. Open WhatsApp on your phone
+2. Send a message to the Twilio number: `Buy groceries`
+3. The bot should reply asking when to remind you!
+4. Reply with `1` (for 20 minutes) or type `in 2 hours`
+5. Wait for your reminder!
+
+---
 
 ## Usage
 
 ### Creating a Reminder
 
-Send any text message to the bot:
-
+Send any message to the bot:
 ```
-You: Buy groceries
+You: Call mom
 
 Bot: *Set a reminder for:*
-     "Buy groceries"
+     "Call mom"
 
-     When should I remind you?
+     *When should I remind you?*
 
-     [Choose Time button - shows interactive list]
+     *1* - In 20 minutes
+     *2* - In 1 hour
+     *3* - In 3 hours
+     *4* - Tomorrow at 9:00 AM
+     *5* - Next Monday at 9:00 AM
+     *6* - In 1 week
+
+     Or type a custom time like:
+     • "in 30 minutes"
+     • "tomorrow at 2pm"
+
+You: 2
+
+Bot: ✓ *Reminder set!*
+     I'll remind you in 1 hour
 ```
-
-Tap "Choose Time" to see options:
-- In 20 minutes
-- In 1 hour
-- In 3 hours
-- Tomorrow at 9:00 AM
-- Next Monday at 9:00 AM
-- In 1 week
-- Custom time
-- Cancel
 
 ### Time Formats
 
 The bot understands:
-- Quick shortcuts: Tap from the interactive list
+- Numbers: `1`, `2`, `3`, `4`, `5`, `6` (quick options)
 - Relative: `in 30 minutes`, `in 2 hours`, `in 3 days`
-- Short form: `30m`, `2h`, `1d`, `1w`
+- Short: `30m`, `2h`, `1d`, `1w`
 - Absolute: `tomorrow at 9am`, `next monday at 2pm`
-- Specific: `jan 15 at 3:30pm`, `december 25 at noon`
+- Specific: `jan 15 at 3:30pm`
 
 ### Commands
 
-| Command | Description |
-|---------|-------------|
-| `help` | Show help message |
-| `list` | Show your pending reminders |
-| `/delete <id>` | Delete a reminder by ID |
-| `cancel` | Cancel current reminder setup |
+| Command | What it does |
+|---------|--------------|
+| `help` | Show help |
+| `list` | See your pending reminders |
+| `/delete 5` | Delete reminder #5 |
+| `cancel` | Cancel current setup |
+
+---
+
+## Troubleshooting
+
+### "I sent a message but got no reply"
+- Is your bot running? (`npm start`)
+- Is ngrok running? (`ngrok http 3000`)
+- Did you set the webhook URL in Twilio?
+- Did you join the sandbox? (send `join xxx-xxx` to the Twilio number)
+
+### "Sandbox expired"
+The sandbox session expires after 72 hours of inactivity. Just send the `join xxx-xxx` message again.
+
+### "Invalid credentials"
+Double-check your `.env` file has the correct Account SID and Auth Token from Twilio Console.
+
+### "ngrok URL changed"
+Free ngrok URLs change every time you restart it. Update the webhook URL in Twilio Sandbox settings.
+
+---
 
 ## Project Structure
 
 ```
 WhatsAppReminer/
 ├── src/
-│   ├── index.ts           # Express server & webhook handling
+│   ├── index.ts           # Express server & webhook
 │   ├── config.ts          # Environment configuration
-│   ├── whatsapp-api.ts    # WhatsApp Cloud API client
-│   ├── database.ts        # SQLite database for reminders
-│   ├── message-handler.ts # Message processing logic
-│   ├── reminder-scheduler.ts # Sends reminders when due
+│   ├── twilio-client.ts   # Twilio API wrapper
+│   ├── database.ts        # SQLite for reminders
+│   ├── message-handler.ts # Message processing
+│   ├── reminder-scheduler.ts # Sends due reminders
 │   └── time-parser.ts     # Natural language time parsing
 ├── .env.example
 ├── package.json
-├── tsconfig.json
 └── README.md
 ```
 
-## Development
+---
 
-```bash
-# Run in development mode
-npm run dev
+## Costs
 
-# Build TypeScript
-npm run build
+| What | Cost |
+|------|------|
+| Twilio signup | Free ($15 credit) |
+| Per message sent | ~$0.005 |
+| Per message received | ~$0.005 |
+| ngrok (free tier) | Free |
 
-# Run production build
-npm start
-```
+$15 credit ≈ 1,500 messages. Plenty for personal use!
 
-## Production Deployment
+---
 
-### Using Docker
+## Going to Production
 
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY dist ./dist
-CMD ["node", "dist/index.js"]
-```
+For production (always-on, fixed URL):
+1. Deploy to a server (Railway, Render, DigitalOcean, AWS, etc.)
+2. Get a real domain or use the hosting provider's URL
+3. Update Twilio webhook to your production URL
+4. Consider upgrading from sandbox to a real Twilio WhatsApp number
 
-### Permanent Access Token
-
-For production, create a System User token:
-1. Go to Business Settings > System Users
-2. Create a new System User
-3. Add the WhatsApp app with full_control permission
-4. Generate a token - this won't expire
-
-### Scaling Considerations
-
-- **Database**: For high volume, migrate from SQLite to PostgreSQL
-- **Horizontal scaling**: Use Redis for session state to run multiple instances
-- **Rate limits**: Cloud API has generous limits, but implement backoff for errors
-
-## Pricing
-
-WhatsApp Cloud API pricing (as of 2024):
-- **Free**: First 1,000 conversations per month
-- **User-initiated**: ~$0.005-0.08 per conversation (varies by country)
-- **Business-initiated**: ~$0.03-0.15 per conversation
-
-A "conversation" is a 24-hour messaging window, not per message.
-
-## Troubleshooting
-
-### Webhook not receiving messages
-- Ensure your server is publicly accessible
-- Check that you've subscribed to the "messages" field
-- Verify the webhook token matches your .env
-
-### "Invalid access token" error
-- Temporary tokens expire after 24 hours
-- Generate a new token or set up a System User token
-
-### Bot not responding
-- Check server logs for errors
-- Ensure the phone number is added to test recipients (for sandbox)
+---
 
 ## License
 

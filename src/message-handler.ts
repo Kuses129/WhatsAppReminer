@@ -1,31 +1,19 @@
-import { WhatsAppAPI } from './whatsapp-api';
+import { TwilioClient } from './twilio-client';
 import { ReminderDatabase } from './database';
 import {
   parseTime,
   getTimeSuggestions,
   formatDateTime,
   formatRelativeTime,
-  TimeSuggestion,
 } from './time-parser';
 
-// Webhook payload types
-export interface WebhookMessage {
-  from: string; // sender's phone number
-  id: string; // message ID
-  timestamp: string;
-  type: 'text' | 'interactive' | 'button' | 'image' | 'document' | 'audio' | 'video' | 'sticker' | 'location' | 'contacts';
-  text?: { body: string };
-  interactive?: {
-    type: 'button_reply' | 'list_reply';
-    button_reply?: { id: string; title: string };
-    list_reply?: { id: string; title: string; description?: string };
-  };
-  context?: {
-    from: string;
-    id: string;
-    forwarded?: boolean;
-    frequently_forwarded?: boolean;
-  };
+// Twilio webhook message format
+export interface TwilioMessage {
+  From: string; // e.g., "whatsapp:+1234567890"
+  To: string;
+  Body: string;
+  MessageSid: string;
+  NumMedia?: string;
 }
 
 interface PendingReminder {
@@ -35,42 +23,25 @@ interface PendingReminder {
 }
 
 export class MessageHandler {
-  private api: WhatsAppAPI;
+  private client: TwilioClient;
   private db: ReminderDatabase;
   private pendingReminders: Map<string, PendingReminder> = new Map();
   private readonly PENDING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-  constructor(api: WhatsAppAPI, db: ReminderDatabase) {
-    this.api = api;
+  constructor(client: TwilioClient, db: ReminderDatabase) {
+    this.client = client;
     this.db = db;
 
     // Clean up expired pending reminders periodically
     setInterval(() => this.cleanupExpiredPending(), 60000);
   }
 
-  async handleMessage(message: WebhookMessage): Promise<void> {
+  async handleMessage(message: TwilioMessage): Promise<void> {
     try {
-      const userId = message.from;
+      const userId = TwilioClient.normalizePhoneNumber(message.From);
+      const body = message.Body.trim();
 
-      // Mark message as read
-      await this.api.markAsRead(message.id);
-
-      // Handle interactive button/list responses
-      if (message.type === 'interactive' && message.interactive) {
-        await this.handleInteractiveResponse(message, userId);
-        return;
-      }
-
-      // Handle text messages
-      if (message.type !== 'text' || !message.text) {
-        await this.api.sendTextMessage(
-          userId,
-          "I can only handle text messages. Send me a message you'd like to be reminded about!"
-        );
-        return;
-      }
-
-      const body = message.text.body.trim();
+      console.log(`Message from ${userId}: ${body}`);
 
       // Check if user has a pending reminder waiting for time
       if (this.pendingReminders.has(userId)) {
@@ -92,7 +63,7 @@ export class MessageHandler {
       }
 
       if (lowerBody === '/cancel' || lowerBody === 'cancel') {
-        await this.api.sendTextMessage(userId, 'No pending reminder to cancel.');
+        await this.client.sendMessage(userId, 'No pending reminder to cancel.');
         return;
       }
 
@@ -103,78 +74,18 @@ export class MessageHandler {
         return;
       }
 
-      // Check if this is a forwarded message (has context)
-      const isForwarded = message.context?.forwarded || message.context?.frequently_forwarded;
-
-      // Start the reminder flow
-      await this.startReminderFlow(userId, body, isForwarded ? 'Forwarded message' : null);
+      // Start the reminder flow with this message
+      await this.startReminderFlow(userId, body);
     } catch (error) {
       console.error('Error handling message:', error);
     }
   }
 
-  private async handleInteractiveResponse(message: WebhookMessage, userId: string): Promise<void> {
-    const interactive = message.interactive!;
-    let selectedId: string | undefined;
-
-    if (interactive.type === 'button_reply' && interactive.button_reply) {
-      selectedId = interactive.button_reply.id;
-    } else if (interactive.type === 'list_reply' && interactive.list_reply) {
-      selectedId = interactive.list_reply.id;
-    }
-
-    if (!selectedId) {
-      return;
-    }
-
-    // Check if it's a cancel action
-    if (selectedId === 'cancel') {
-      this.pendingReminders.delete(userId);
-      await this.api.sendTextMessage(userId, 'Reminder cancelled.');
-      return;
-    }
-
-    // Check if it's a time selection
-    if (selectedId.startsWith('time_')) {
-      const pending = this.pendingReminders.get(userId);
-      if (!pending) {
-        await this.api.sendTextMessage(userId, 'No pending reminder found. Send me a message to create one.');
-        return;
-      }
-
-      const shortcut = selectedId.replace('time_', '');
-      const suggestions = getTimeSuggestions();
-      const suggestion = suggestions.find((s) => s.shortcut === shortcut);
-
-      if (suggestion) {
-        await this.createReminder(userId, pending, suggestion.value);
-      }
-      return;
-    }
-
-    // Check if it's a custom time request
-    if (selectedId === 'custom_time') {
-      await this.api.sendTextMessage(
-        userId,
-        'Type your custom time. Examples:\n' +
-          '• "in 30 minutes"\n' +
-          '• "tomorrow at 2pm"\n' +
-          '• "next friday at 10am"\n' +
-          '• "jan 15 at 3:30pm"'
-      );
-      return;
-    }
-  }
-
-  private async startReminderFlow(
-    userId: string,
-    reminderText: string,
-    originalSender: string | null
-  ): Promise<void> {
+  private async startReminderFlow(userId: string, reminderText: string): Promise<void> {
     // Store the pending reminder
     this.pendingReminders.set(userId, {
       message: reminderText,
-      originalSender,
+      originalSender: null,
       timestamp: Date.now(),
     });
 
@@ -183,34 +94,28 @@ export class MessageHandler {
     const previewText =
       reminderText.length > 100 ? reminderText.substring(0, 100) + '...' : reminderText;
 
-    // Send interactive list with time options
-    const bodyText = `*Set a reminder for:*\n"${previewText}"\n\nWhen should I remind you?`;
+    // Build the response with numbered options
+    const lines = [
+      `*Set a reminder for:*`,
+      `"${previewText}"`,
+      ``,
+      `*When should I remind you?*`,
+      ``,
+    ];
 
-    await this.api.sendInteractiveList(userId, bodyText, 'Choose Time', [
-      {
-        title: 'Quick Options',
-        rows: suggestions.slice(0, 6).map((s) => ({
-          id: `time_${s.shortcut}`,
-          title: s.label,
-          description: formatDateTime(s.value),
-        })),
-      },
-      {
-        title: 'Other',
-        rows: [
-          {
-            id: 'custom_time',
-            title: 'Custom time',
-            description: 'Type your own time',
-          },
-          {
-            id: 'cancel',
-            title: 'Cancel',
-            description: 'Cancel this reminder',
-          },
-        ],
-      },
-    ]);
+    suggestions.forEach((s) => {
+      lines.push(`*${s.shortcut}* - ${s.label}`);
+    });
+
+    lines.push(``);
+    lines.push(`Or type a custom time like:`);
+    lines.push(`• "in 30 minutes"`);
+    lines.push(`• "tomorrow at 2pm"`);
+    lines.push(`• "next friday at 10am"`);
+    lines.push(``);
+    lines.push(`_Reply with a number (1-6) or type a time. Say "cancel" to cancel._`);
+
+    await this.client.sendMessage(userId, lines.join('\n'));
   }
 
   private async handleTimeSelection(userId: string, input: string): Promise<void> {
@@ -222,7 +127,7 @@ export class MessageHandler {
     // Check for cancel
     if (input.toLowerCase() === 'cancel' || input.toLowerCase() === '/cancel') {
       this.pendingReminders.delete(userId);
-      await this.api.sendTextMessage(userId, 'Reminder cancelled.');
+      await this.client.sendMessage(userId, 'Reminder cancelled.');
       return;
     }
 
@@ -245,31 +150,23 @@ export class MessageHandler {
 
     // Validate the time
     if (!selectedTime) {
-      await this.api.sendTextMessage(
+      await this.client.sendMessage(
         userId,
         "I couldn't understand that time. Please try again:\n" +
           '• "in 30 minutes"\n' +
           '• "tomorrow at 2pm"\n' +
           '• "next friday at 10am"\n\n' +
-          'Or tap "Choose Time" above to pick an option.'
+          'Or reply with a number (1-6) for a quick option.'
       );
       return;
     }
 
     // Check if the time is in the past
     if (selectedTime.getTime() <= Date.now()) {
-      await this.api.sendTextMessage(userId, "That time is in the past. Please choose a future time.");
+      await this.client.sendMessage(userId, "That time is in the past. Please choose a future time.");
       return;
     }
 
-    await this.createReminder(userId, pending, selectedTime);
-  }
-
-  private async createReminder(
-    userId: string,
-    pending: PendingReminder,
-    selectedTime: Date
-  ): Promise<void> {
     // Create the reminder
     const reminder = this.db.addReminder(
       userId,
@@ -286,7 +183,7 @@ export class MessageHandler {
     const formattedTime = formatDateTime(selectedTime);
     const relativeTime = formatRelativeTime(selectedTime);
 
-    await this.api.sendTextMessage(
+    await this.client.sendMessage(
       userId,
       `✓ *Reminder set!*\n\n` +
         `I'll remind you ${relativeTime}\n` +
@@ -312,16 +209,17 @@ Send me any message and I'll ask you when you want to be reminded.
 • "in 2 hours"
 • "tomorrow at 9am"
 • "next monday at 2pm"
-• "jan 15 at 3:30pm"`;
+• "jan 15 at 3:30pm"
+• Short: "30m", "2h", "1d"`;
 
-    await this.api.sendTextMessage(userId, helpText);
+    await this.client.sendMessage(userId, helpText);
   }
 
   private async listReminders(userId: string): Promise<void> {
     const reminders = this.db.getUserReminders(userId);
 
     if (reminders.length === 0) {
-      await this.api.sendTextMessage(userId, "You don't have any pending reminders.");
+      await this.client.sendMessage(userId, "You don't have any pending reminders.");
       return;
     }
 
@@ -339,7 +237,7 @@ Send me any message and I'll ask you when you want to be reminded.
 
     lines.push('_Use /delete <id> to remove a reminder_');
 
-    await this.api.sendTextMessage(userId, lines.join('\n'));
+    await this.client.sendMessage(userId, lines.join('\n'));
   }
 
   private async deleteReminder(userId: string, reminderId: number): Promise<void> {
@@ -347,7 +245,7 @@ Send me any message and I'll ask you when you want to be reminded.
     const reminder = reminders.find((r) => r.id === reminderId);
 
     if (!reminder) {
-      await this.api.sendTextMessage(
+      await this.client.sendMessage(
         userId,
         `Reminder #${reminderId} not found or doesn't belong to you.`
       );
@@ -357,9 +255,9 @@ Send me any message and I'll ask you when you want to be reminded.
     const deleted = this.db.deleteReminder(reminderId);
 
     if (deleted) {
-      await this.api.sendTextMessage(userId, `✓ Reminder #${reminderId} deleted.`);
+      await this.client.sendMessage(userId, `✓ Reminder #${reminderId} deleted.`);
     } else {
-      await this.api.sendTextMessage(userId, `Failed to delete reminder #${reminderId}.`);
+      await this.client.sendMessage(userId, `Failed to delete reminder #${reminderId}.`);
     }
   }
 

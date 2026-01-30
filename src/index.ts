@@ -1,25 +1,28 @@
 import express, { Request, Response } from 'express';
 import { config } from './config';
-import { WhatsAppAPI } from './whatsapp-api';
+import { TwilioClient } from './twilio-client';
 import { ReminderDatabase } from './database';
-import { MessageHandler, WebhookMessage } from './message-handler';
+import { MessageHandler, TwilioMessage } from './message-handler';
 import { ReminderScheduler } from './reminder-scheduler';
 
 // Initialize components
-console.log('WhatsApp Reminder Bot (Cloud API)');
-console.log('==================================\n');
+console.log('WhatsApp Reminder Bot (Twilio)');
+console.log('==============================\n');
 
 const db = new ReminderDatabase(config.database.path);
 console.log('Database initialized');
 
-const whatsappApi = new WhatsAppAPI(config.whatsapp);
-console.log('WhatsApp API client initialized');
+const twilioClient = new TwilioClient(config.twilio);
+console.log('Twilio client initialized');
 
-const messageHandler = new MessageHandler(whatsappApi, db);
-const scheduler = new ReminderScheduler(whatsappApi, db);
+const messageHandler = new MessageHandler(twilioClient, db);
+const scheduler = new ReminderScheduler(twilioClient, db);
 
 // Create Express app
 const app = express();
+
+// Parse URL-encoded bodies (Twilio sends data this way)
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // Health check endpoint
@@ -27,89 +30,53 @@ app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Webhook verification (GET) - Meta sends this to verify your webhook
-app.get('/webhook', (req: Request, res: Response) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  console.log('Webhook verification request received');
-
-  if (mode === 'subscribe' && token === config.whatsapp.webhookVerifyToken) {
-    console.log('Webhook verified successfully');
-    res.status(200).send(challenge);
-  } else {
-    console.log('Webhook verification failed');
-    res.sendStatus(403);
-  }
+// Root endpoint - helpful info
+app.get('/', (_req: Request, res: Response) => {
+  res.send(`
+    <h1>WhatsApp Reminder Bot</h1>
+    <p>Bot is running!</p>
+    <p>Webhook URL: <code>POST /webhook</code></p>
+    <p>Health check: <code>GET /health</code></p>
+  `);
 });
 
-// Webhook for incoming messages (POST)
+// Twilio webhook for incoming WhatsApp messages
 app.post('/webhook', async (req: Request, res: Response) => {
   try {
-    const body = req.body;
+    const message: TwilioMessage = {
+      From: req.body.From,
+      To: req.body.To,
+      Body: req.body.Body || '',
+      MessageSid: req.body.MessageSid,
+      NumMedia: req.body.NumMedia,
+    };
 
-    // Check if this is a WhatsApp message webhook
-    if (body.object !== 'whatsapp_business_account') {
-      res.sendStatus(404);
-      return;
-    }
+    console.log(`\nIncoming message from ${message.From}`);
 
-    // Process each entry
-    for (const entry of body.entry || []) {
-      for (const change of entry.changes || []) {
-        if (change.field !== 'messages') {
-          continue;
-        }
+    // Handle message asynchronously
+    messageHandler.handleMessage(message).catch((error) => {
+      console.error('Error handling message:', error);
+    });
 
-        const value = change.value;
-
-        // Skip if no messages
-        if (!value.messages || value.messages.length === 0) {
-          continue;
-        }
-
-        // Process each message
-        for (const message of value.messages) {
-          console.log(`Received message from ${message.from}: ${message.type}`);
-
-          // Convert to our message format and handle
-          const webhookMessage: WebhookMessage = {
-            from: message.from,
-            id: message.id,
-            timestamp: message.timestamp,
-            type: message.type,
-            text: message.text,
-            interactive: message.interactive,
-            context: message.context,
-          };
-
-          // Handle message asynchronously (don't block webhook response)
-          messageHandler.handleMessage(webhookMessage).catch((error) => {
-            console.error('Error handling message:', error);
-          });
-        }
-      }
-    }
-
-    // Always respond with 200 to acknowledge receipt
-    res.sendStatus(200);
+    // Respond to Twilio immediately (empty TwiML response)
+    res.set('Content-Type', 'text/xml');
+    res.send('<Response></Response>');
   } catch (error) {
     console.error('Webhook error:', error);
-    res.sendStatus(500);
+    res.status(500).send('<Response></Response>');
   }
 });
 
 // Start the server
 const server = app.listen(config.server.port, config.server.host, () => {
   console.log(`\nServer listening on http://${config.server.host}:${config.server.port}`);
-  console.log(`Webhook URL: http://YOUR_DOMAIN:${config.server.port}/webhook\n`);
+  console.log(`\nWebhook URL for Twilio: http://YOUR_NGROK_URL/webhook\n`);
 
   // Start the reminder scheduler
   scheduler.start();
   console.log('Reminder scheduler started\n');
 
-  console.log('Bot is ready to receive messages!');
+  console.log('Bot is ready! Send a WhatsApp message to your Twilio number.\n');
 });
 
 // Graceful shutdown

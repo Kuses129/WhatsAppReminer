@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-reminder-bot",
-  "version": "2.0.0",
-  "description": "A WhatsApp bot that reminds you of messages, using the official WhatsApp Cloud API",
+  "version": "3.0.0",
+  "description": "A WhatsApp reminder bot using Twilio - no business verification needed",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -13,15 +13,15 @@
     "whatsapp",
     "reminder",
     "bot",
-    "cloud-api"
+    "twilio"
   ],
   "license": "MIT",
   "dependencies": {
-    "axios": "^1.6.7",
     "better-sqlite3": "^9.4.3",
     "chrono-node": "^2.7.5",
     "dotenv": "^16.4.1",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "twilio": "^5.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.9",

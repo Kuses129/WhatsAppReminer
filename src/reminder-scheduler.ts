@@ -1,15 +1,15 @@
-import { WhatsAppAPI } from './whatsapp-api';
+import { TwilioClient } from './twilio-client';
 import { ReminderDatabase, Reminder } from './database';
 import { formatDateTime } from './time-parser';
 
 export class ReminderScheduler {
-  private api: WhatsAppAPI;
+  private client: TwilioClient;
   private db: ReminderDatabase;
   private checkInterval: NodeJS.Timeout | null = null;
   private readonly CHECK_INTERVAL_MS = 30000; // Check every 30 seconds
 
-  constructor(api: WhatsAppAPI, db: ReminderDatabase) {
-    this.api = api;
+  constructor(client: TwilioClient, db: ReminderDatabase) {
+    this.client = client;
     this.db = db;
   }
 
@@ -53,7 +53,7 @@ export class ReminderScheduler {
     try {
       const message = this.formatReminderMessage(reminder);
 
-      await this.api.sendTextMessage(reminder.userId, message);
+      await this.client.sendMessage(reminder.userId, message);
 
       this.db.markAsSent(reminder.id);
       console.log(`Sent reminder #${reminder.id} to ${reminder.userId}`);

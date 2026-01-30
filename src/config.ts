@@ -17,11 +17,11 @@ function optionalEnv(name: string, defaultValue: string): string {
 }
 
 export const config = {
-  // WhatsApp Cloud API credentials
-  whatsapp: {
-    accessToken: requireEnv('WHATSAPP_ACCESS_TOKEN'),
-    phoneNumberId: requireEnv('WHATSAPP_PHONE_NUMBER_ID'),
-    webhookVerifyToken: requireEnv('WHATSAPP_WEBHOOK_VERIFY_TOKEN'),
+  // Twilio credentials
+  twilio: {
+    accountSid: requireEnv('TWILIO_ACCOUNT_SID'),
+    authToken: requireEnv('TWILIO_AUTH_TOKEN'),
+    whatsappNumber: requireEnv('TWILIO_WHATSAPP_NUMBER'),
   },
 
   // Server configuration
