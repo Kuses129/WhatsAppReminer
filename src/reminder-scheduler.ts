@@ -1,6 +1,7 @@
 import { TwilioClient } from './twilio-client';
 import { ReminderDatabase, Reminder } from './database';
 import { formatDateTime } from './time-parser';
+import { getTranslations } from './locales';
 
 export class ReminderScheduler {
   private client: TwilioClient;
@@ -51,7 +52,9 @@ export class ReminderScheduler {
 
   private async sendReminder(reminder: Reminder): Promise<void> {
     try {
-      const message = this.formatReminderMessage(reminder);
+      // Get user's language preference
+      const lang = this.db.getUserLanguage(reminder.userId);
+      const message = this.formatReminderMessage(reminder, lang);
 
       await this.client.sendMessage(reminder.userId, message);
 
@@ -62,20 +65,21 @@ export class ReminderScheduler {
     }
   }
 
-  private formatReminderMessage(reminder: Reminder): string {
+  private formatReminderMessage(reminder: Reminder, lang: 'en' | 'he'): string {
+    const t = getTranslations(lang);
     const lines: string[] = [];
 
-    lines.push('⏰ *Reminder*');
+    lines.push(t.notification.title);
     lines.push('');
 
     if (reminder.originalSender) {
-      lines.push(`_Originally from: ${reminder.originalSender}_`);
+      lines.push(`${t.notification.originallyFrom} ${reminder.originalSender}`);
       lines.push('');
     }
 
     lines.push(reminder.message);
     lines.push('');
-    lines.push(`_Set on: ${formatDateTime(new Date(reminder.createdAt))}_`);
+    lines.push(`${t.notification.setOn} ${formatDateTime(new Date(reminder.createdAt), lang)}`);
 
     return lines.join('\n');
   }

@@ -1,4 +1,5 @@
 import * as chrono from 'chrono-node';
+import { Language, getTranslations } from './locales';
 
 export interface TimeSuggestion {
   label: string;
@@ -54,7 +55,8 @@ function parseCustomPatterns(input: string, referenceDate: Date): Date | null {
   return null;
 }
 
-export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSuggestion[] {
+export function getTimeSuggestions(referenceDate: Date = new Date(), lang: Language = 'en'): TimeSuggestion[] {
+  const t = getTranslations(lang);
   const suggestions: TimeSuggestion[] = [];
   const now = new Date(referenceDate);
 
@@ -62,7 +64,7 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   const in20Min = new Date(now);
   in20Min.setMinutes(in20Min.getMinutes() + 20);
   suggestions.push({
-    label: 'In 20 minutes',
+    label: t.time.in20Minutes,
     value: in20Min,
     shortcut: '1',
   });
@@ -71,7 +73,7 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   const in1Hour = new Date(now);
   in1Hour.setHours(in1Hour.getHours() + 1);
   suggestions.push({
-    label: 'In 1 hour',
+    label: t.time.in1Hour,
     value: in1Hour,
     shortcut: '2',
   });
@@ -80,7 +82,7 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   const in3Hours = new Date(now);
   in3Hours.setHours(in3Hours.getHours() + 3);
   suggestions.push({
-    label: 'In 3 hours',
+    label: t.time.in3Hours,
     value: in3Hours,
     shortcut: '3',
   });
@@ -90,7 +92,7 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   tomorrow9am.setDate(tomorrow9am.getDate() + 1);
   tomorrow9am.setHours(9, 0, 0, 0);
   suggestions.push({
-    label: 'Tomorrow at 9:00 AM',
+    label: t.time.tomorrowAt9,
     value: tomorrow9am,
     shortcut: '4',
   });
@@ -101,7 +103,7 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   nextMonday.setDate(nextMonday.getDate() + daysUntilMonday);
   nextMonday.setHours(9, 0, 0, 0);
   suggestions.push({
-    label: `Next Monday at 9:00 AM`,
+    label: t.time.nextMondayAt9,
     value: nextMonday,
     shortcut: '5',
   });
@@ -110,7 +112,7 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   const nextWeek = new Date(now);
   nextWeek.setDate(nextWeek.getDate() + 7);
   suggestions.push({
-    label: 'In 1 week',
+    label: t.time.in1Week,
     value: nextWeek,
     shortcut: '6',
   });
@@ -118,36 +120,38 @@ export function getTimeSuggestions(referenceDate: Date = new Date()): TimeSugges
   return suggestions;
 }
 
-export function formatTimeSuggestions(suggestions: TimeSuggestion[]): string {
+export function formatTimeSuggestions(suggestions: TimeSuggestion[], lang: Language = 'en'): string {
+  const t = getTranslations(lang);
   const lines = suggestions.map((s) => {
-    const formatted = formatDateTime(s.value);
+    const formatted = formatDateTime(s.value, lang);
     return `*${s.shortcut}*. ${s.label} (${formatted})`;
   });
 
   lines.push('');
-  lines.push('Or reply with a custom time:');
-  lines.push('- "in 30 minutes"');
-  lines.push('- "tomorrow at 2pm"');
-  lines.push('- "next friday at 10am"');
-  lines.push('- "jan 15 at 3:30pm"');
+  lines.push(t.reminder.orTypeCustom);
+  t.reminder.customExamples.forEach((example) => {
+    lines.push(`- ${example}`);
+  });
 
   return lines.join('\n');
 }
 
-export function formatDateTime(date: Date): string {
+export function formatDateTime(date: Date, lang: Language = 'en'): string {
+  const locale = lang === 'he' ? 'he-IL' : 'en-US';
   const options: Intl.DateTimeFormatOptions = {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hour12: lang === 'en',
   };
 
-  return date.toLocaleString('en-US', options);
+  return date.toLocaleString(locale, options);
 }
 
-export function formatRelativeTime(date: Date): string {
+export function formatRelativeTime(date: Date, lang: Language = 'en'): string {
+  const t = getTranslations(lang);
   const now = new Date();
   const diffMs = date.getTime() - now.getTime();
   const diffMins = Math.round(diffMs / (1000 * 60));
@@ -155,12 +159,12 @@ export function formatRelativeTime(date: Date): string {
   const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
   if (diffMins < 60) {
-    return `in ${diffMins} minute${diffMins !== 1 ? 's' : ''}`;
+    return t.time.inMinutes(diffMins);
   } else if (diffHours < 24) {
-    return `in ${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
+    return t.time.inHours(diffHours);
   } else if (diffDays < 7) {
-    return `in ${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+    return t.time.inDays(diffDays);
   } else {
-    return formatDateTime(date);
+    return formatDateTime(date, lang);
   }
 }

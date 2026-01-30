@@ -1,6 +1,7 @@
 import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
+import { Language, DEFAULT_LANGUAGE } from './locales';
 
 export interface Reminder {
   id: number;
@@ -11,6 +12,7 @@ export interface Reminder {
   remindAt: number; // Unix timestamp in milliseconds
   createdAt: number;
   sent: boolean;
+  language?: Language;
 }
 
 export class ReminderDatabase {
@@ -51,6 +53,14 @@ export class ReminderDatabase {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_remindAt ON reminders(remindAt)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_sent ON reminders(sent)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_userId ON reminders(userId)`);
+
+    // Create user_preferences table for language settings
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS user_preferences (
+        userId TEXT PRIMARY KEY,
+        language TEXT DEFAULT 'en'
+      )
+    `);
 
     this.save();
   }
@@ -177,6 +187,34 @@ export class ReminderDatabase {
       createdAt: obj.createdAt,
       sent: Boolean(obj.sent),
     };
+  }
+
+  getUserLanguage(userId: string): Language {
+    if (!this.db) return DEFAULT_LANGUAGE;
+
+    const stmt = this.db.prepare(
+      `SELECT language FROM user_preferences WHERE userId = ?`
+    );
+    stmt.bind([userId]);
+
+    let language: Language = DEFAULT_LANGUAGE;
+    if (stmt.step()) {
+      const row = stmt.get();
+      language = (row[0] as Language) || DEFAULT_LANGUAGE;
+    }
+    stmt.free();
+
+    return language;
+  }
+
+  setUserLanguage(userId: string, language: Language): void {
+    if (!this.db) return;
+
+    this.db.run(
+      `INSERT OR REPLACE INTO user_preferences (userId, language) VALUES (?, ?)`,
+      [userId, language]
+    );
+    this.save();
   }
 
   close(): void {

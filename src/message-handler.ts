@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatRelativeTime,
 } from './time-parser';
+import { Language, getTranslations, isValidLanguage } from './locales';
 
 // Twilio webhook message format
 export interface TwilioMessage {
@@ -36,16 +37,21 @@ export class MessageHandler {
     setInterval(() => this.cleanupExpiredPending(), 60000);
   }
 
+  private getUserLanguage(userId: string): Language {
+    return this.db.getUserLanguage(userId);
+  }
+
   async handleMessage(message: TwilioMessage): Promise<void> {
     try {
       const userId = TwilioClient.normalizePhoneNumber(message.From);
       const body = message.Body.trim();
+      const lang = this.getUserLanguage(userId);
 
       console.log(`Message from ${userId}: ${body}`);
 
       // Check if user has a pending reminder waiting for time
       if (this.pendingReminders.has(userId)) {
-        await this.handleTimeSelection(userId, body);
+        await this.handleTimeSelection(userId, body, lang);
         return;
       }
 
@@ -53,35 +59,72 @@ export class MessageHandler {
       const lowerBody = body.toLowerCase();
 
       if (lowerBody === '/help' || lowerBody === 'help') {
-        await this.sendHelp(userId);
+        await this.sendHelp(userId, lang);
         return;
       }
 
       if (lowerBody === '/list' || lowerBody === 'list') {
-        await this.listReminders(userId);
+        await this.listReminders(userId, lang);
         return;
       }
 
       if (lowerBody === '/cancel' || lowerBody === 'cancel') {
-        await this.client.sendMessage(userId, 'No pending reminder to cancel.');
+        const t = getTranslations(lang);
+        await this.client.sendMessage(userId, t.reminder.noPendingToCancel);
+        return;
+      }
+
+      // Check for language command: /language <en|he>
+      const langMatch = body.match(/^\/language\s*(\w*)$/i);
+      if (langMatch) {
+        await this.handleLanguageCommand(userId, langMatch[1], lang);
         return;
       }
 
       // Check for delete command: /delete <id>
       const deleteMatch = body.match(/^\/delete\s+(\d+)$/i);
       if (deleteMatch) {
-        await this.deleteReminder(userId, parseInt(deleteMatch[1], 10));
+        await this.deleteReminder(userId, parseInt(deleteMatch[1], 10), lang);
         return;
       }
 
       // Start the reminder flow with this message
-      await this.startReminderFlow(userId, body);
+      await this.startReminderFlow(userId, body, lang);
     } catch (error) {
       console.error('Error handling message:', error);
     }
   }
 
-  private async startReminderFlow(userId: string, reminderText: string): Promise<void> {
+  private async handleLanguageCommand(userId: string, langArg: string, currentLang: Language): Promise<void> {
+    const t = getTranslations(currentLang);
+
+    if (!langArg) {
+      // Show current language and usage
+      await this.client.sendMessage(
+        userId,
+        `${t.language.current}\n${t.language.available}\n\n${t.language.usage}`
+      );
+      return;
+    }
+
+    const newLang = langArg.toLowerCase();
+    if (!isValidLanguage(newLang)) {
+      await this.client.sendMessage(
+        userId,
+        `${t.language.available}\n${t.language.usage}`
+      );
+      return;
+    }
+
+    // Set the new language
+    this.db.setUserLanguage(userId, newLang);
+    const newT = getTranslations(newLang);
+    await this.client.sendMessage(userId, newT.language.changed);
+  }
+
+  private async startReminderFlow(userId: string, reminderText: string, lang: Language): Promise<void> {
+    const t = getTranslations(lang);
+
     // Store the pending reminder
     this.pendingReminders.set(userId, {
       message: reminderText,
@@ -90,16 +133,16 @@ export class MessageHandler {
     });
 
     // Get time suggestions
-    const suggestions = getTimeSuggestions();
+    const suggestions = getTimeSuggestions(new Date(), lang);
     const previewText =
       reminderText.length > 100 ? reminderText.substring(0, 100) + '...' : reminderText;
 
     // Build the response with numbered options
     const lines = [
-      `*Set a reminder for:*`,
+      t.reminder.setReminderFor,
       `"${previewText}"`,
       ``,
-      `*When should I remind you?*`,
+      t.reminder.whenRemind,
       ``,
     ];
 
@@ -108,17 +151,18 @@ export class MessageHandler {
     });
 
     lines.push(``);
-    lines.push(`Or type a custom time like:`);
-    lines.push(`• "in 30 minutes"`);
-    lines.push(`• "tomorrow at 2pm"`);
-    lines.push(`• "next friday at 10am"`);
+    lines.push(t.reminder.orTypeCustom);
+    t.reminder.customExamples.forEach((example) => {
+      lines.push(`• ${example}`);
+    });
     lines.push(``);
-    lines.push(`_Reply with a number (1-6) or type a time. Say "cancel" to cancel._`);
+    lines.push(t.reminder.replyInstructions);
 
     await this.client.sendMessage(userId, lines.join('\n'));
   }
 
-  private async handleTimeSelection(userId: string, input: string): Promise<void> {
+  private async handleTimeSelection(userId: string, input: string, lang: Language): Promise<void> {
+    const t = getTranslations(lang);
     const pending = this.pendingReminders.get(userId);
     if (!pending) {
       return;
@@ -127,7 +171,7 @@ export class MessageHandler {
     // Check for cancel
     if (input.toLowerCase() === 'cancel' || input.toLowerCase() === '/cancel') {
       this.pendingReminders.delete(userId);
-      await this.client.sendMessage(userId, 'Reminder cancelled.');
+      await this.client.sendMessage(userId, t.reminder.cancelled);
       return;
     }
 
@@ -136,7 +180,7 @@ export class MessageHandler {
     // Check if it's a shortcut number (1-6)
     const shortcutNum = parseInt(input, 10);
     if (shortcutNum >= 1 && shortcutNum <= 6) {
-      const suggestions = getTimeSuggestions();
+      const suggestions = getTimeSuggestions(new Date(), lang);
       const suggestion = suggestions.find((s) => s.shortcut === input);
       if (suggestion) {
         selectedTime = suggestion.value;
@@ -150,20 +194,19 @@ export class MessageHandler {
 
     // Validate the time
     if (!selectedTime) {
-      await this.client.sendMessage(
-        userId,
-        "I couldn't understand that time. Please try again:\n" +
-          '• "in 30 minutes"\n' +
-          '• "tomorrow at 2pm"\n' +
-          '• "next friday at 10am"\n\n' +
-          'Or reply with a number (1-6) for a quick option.'
-      );
+      const errorLines = [
+        t.reminder.invalidTime,
+        ...t.reminder.invalidTimeExamples.map((ex) => `• ${ex}`),
+        '',
+        t.reminder.invalidTimeHint,
+      ];
+      await this.client.sendMessage(userId, errorLines.join('\n'));
       return;
     }
 
     // Check if the time is in the past
     if (selectedTime.getTime() <= Date.now()) {
-      await this.client.sendMessage(userId, "That time is in the past. Please choose a future time.");
+      await this.client.sendMessage(userId, t.reminder.pastTime);
       return;
     }
 
@@ -180,53 +223,51 @@ export class MessageHandler {
     this.pendingReminders.delete(userId);
 
     // Confirm to user
-    const formattedTime = formatDateTime(selectedTime);
-    const relativeTime = formatRelativeTime(selectedTime);
+    const formattedTime = formatDateTime(selectedTime, lang);
+    const relativeTime = formatRelativeTime(selectedTime, lang);
 
     await this.client.sendMessage(
       userId,
-      `✓ *Reminder set!*\n\n` +
-        `I'll remind you ${relativeTime}\n` +
+      `${t.reminder.reminderSet}\n\n` +
+        `${t.reminder.willRemindYou} ${relativeTime}\n` +
         `_${formattedTime}_\n\n` +
-        `ID: #${reminder.id}`
+        `${t.reminder.reminderId} #${reminder.id}`
     );
   }
 
-  private async sendHelp(userId: string): Promise<void> {
-    const helpText = `*WhatsApp Reminder Bot*
+  private async sendHelp(userId: string, lang: Language): Promise<void> {
+    const t = getTranslations(lang);
+    const helpText = `${t.help.title}
 
-*How to create a reminder:*
-Send me any message and I'll ask you when you want to be reminded.
+${t.help.howToCreate}
+${t.help.howToCreateDesc}
 
-*Commands:*
-• *help* - Show this help
-• *list* - Show pending reminders
-• */delete <id>* - Delete a reminder
-• *cancel* - Cancel current setup
+${t.help.commandsTitle}
+• ${t.help.helpCmd}
+• ${t.help.listCmd}
+• ${t.help.deleteCmd}
+• ${t.help.cancelCmd}
+• ${t.help.languageCmd}
 
-*Time formats I understand:*
-• "in 30 minutes"
-• "in 2 hours"
-• "tomorrow at 9am"
-• "next monday at 2pm"
-• "jan 15 at 3:30pm"
-• Short: "30m", "2h", "1d"`;
+${t.help.timeFormatsTitle}
+${t.help.timeFormats.map((f) => `• ${f}`).join('\n')}`;
 
     await this.client.sendMessage(userId, helpText);
   }
 
-  private async listReminders(userId: string): Promise<void> {
+  private async listReminders(userId: string, lang: Language): Promise<void> {
+    const t = getTranslations(lang);
     const reminders = this.db.getUserReminders(userId);
 
     if (reminders.length === 0) {
-      await this.client.sendMessage(userId, "You don't have any pending reminders.");
+      await this.client.sendMessage(userId, t.list.noReminders);
       return;
     }
 
-    const lines = ['*Your Pending Reminders:*\n'];
+    const lines = [`${t.list.pendingTitle}\n`];
 
     for (const reminder of reminders) {
-      const time = formatDateTime(new Date(reminder.remindAt));
+      const time = formatDateTime(new Date(reminder.remindAt), lang);
       const preview =
         reminder.message.length > 50 ? reminder.message.substring(0, 50) + '...' : reminder.message;
 
@@ -235,19 +276,20 @@ Send me any message and I'll ask you when you want to be reminded.
       lines.push('');
     }
 
-    lines.push('_Use /delete <id> to remove a reminder_');
+    lines.push(t.list.deleteHint);
 
     await this.client.sendMessage(userId, lines.join('\n'));
   }
 
-  private async deleteReminder(userId: string, reminderId: number): Promise<void> {
+  private async deleteReminder(userId: string, reminderId: number, lang: Language): Promise<void> {
+    const t = getTranslations(lang);
     const reminders = this.db.getUserReminders(userId);
     const reminder = reminders.find((r) => r.id === reminderId);
 
     if (!reminder) {
       await this.client.sendMessage(
         userId,
-        `Reminder #${reminderId} not found or doesn't belong to you.`
+        `#${reminderId} ${t.delete.notFound}`
       );
       return;
     }
@@ -255,9 +297,9 @@ Send me any message and I'll ask you when you want to be reminded.
     const deleted = this.db.deleteReminder(reminderId);
 
     if (deleted) {
-      await this.client.sendMessage(userId, `✓ Reminder #${reminderId} deleted.`);
+      await this.client.sendMessage(userId, `${t.delete.deleted} #${reminderId}`);
     } else {
-      await this.client.sendMessage(userId, `Failed to delete reminder #${reminderId}.`);
+      await this.client.sendMessage(userId, `${t.delete.failed} #${reminderId}.`);
     }
   }
 
