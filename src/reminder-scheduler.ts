@@ -1,14 +1,14 @@
-import { TwilioClient } from './twilio-client';
+import { WahaClient } from './waha-client';
 import { ReminderDatabase, Reminder } from './database';
 import { formatDateTime } from './time-parser';
 
 export class ReminderScheduler {
-  private client: TwilioClient;
+  private client: WahaClient;
   private db: ReminderDatabase;
   private checkInterval: NodeJS.Timeout | null = null;
   private readonly CHECK_INTERVAL_MS = 30000; // Check every 30 seconds
 
-  constructor(client: TwilioClient, db: ReminderDatabase) {
+  constructor(client: WahaClient, db: ReminderDatabase) {
     this.client = client;
     this.db = db;
   }

@@ -1,30 +1,28 @@
 import express, { Request, Response } from 'express';
 import { config } from './config';
-import { TwilioClient } from './twilio-client';
+import { WahaClient } from './waha-client';
 import { ReminderDatabase } from './database';
-import { MessageHandler, TwilioMessage } from './message-handler';
+import { MessageHandler, WahaMessage } from './message-handler';
 import { ReminderScheduler } from './reminder-scheduler';
 
 async function main() {
   // Initialize components
-  console.log('WhatsApp Reminder Bot (Twilio)');
-  console.log('==============================\n');
+  console.log('WhatsApp Reminder Bot (WAHA)');
+  console.log('============================\n');
 
   const db = new ReminderDatabase(config.database.path);
   await db.waitForInit();
   console.log('Database initialized');
 
-  const twilioClient = new TwilioClient(config.twilio);
-  console.log('Twilio client initialized');
+  const wahaClient = new WahaClient(config.waha);
+  console.log(`WAHA client initialized (${config.waha.apiUrl}, session: ${config.waha.session})`);
 
-  const messageHandler = new MessageHandler(twilioClient, db);
-  const scheduler = new ReminderScheduler(twilioClient, db);
+  const messageHandler = new MessageHandler(wahaClient, db);
+  const scheduler = new ReminderScheduler(wahaClient, db);
 
   // Create Express app
   const app = express();
 
-  // Parse URL-encoded bodies (Twilio sends data this way)
-  app.use(express.urlencoded({ extended: false }));
   app.use(express.json());
 
   // Health check endpoint
@@ -36,49 +34,76 @@ async function main() {
   app.get('/', (_req: Request, res: Response) => {
     res.send(`
       <h1>WhatsApp Reminder Bot</h1>
-      <p>Bot is running!</p>
+      <p>Bot is running with WAHA!</p>
       <p>Webhook URL: <code>POST /webhook</code></p>
       <p>Health check: <code>GET /health</code></p>
     `);
   });
 
-  // Twilio webhook for incoming WhatsApp messages
+  // WAHA webhook for incoming WhatsApp messages
   app.post('/webhook', async (req: Request, res: Response) => {
     try {
-      const message: TwilioMessage = {
-        From: req.body.From,
-        To: req.body.To,
-        Body: req.body.Body || '',
-        MessageSid: req.body.MessageSid,
-        NumMedia: req.body.NumMedia,
+      const event = req.body;
+
+      // Only process incoming messages (not our own)
+      if (event.event !== 'message' && event.event !== 'message.any') {
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      const payload = event.payload;
+      if (!payload) {
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      // Skip messages sent by us (the bot)
+      if (payload.fromMe) {
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      // Skip non-text messages
+      if (!payload.body) {
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      const message: WahaMessage = {
+        id: payload.id || '',
+        from: payload.from,
+        fromMe: payload.fromMe,
+        to: payload.to || '',
+        body: payload.body || '',
+        hasMedia: payload.hasMedia || false,
+        timestamp: payload.timestamp || Date.now(),
       };
 
-      console.log(`\nIncoming message from ${message.From}`);
+      console.log(`\nIncoming message from ${message.from}: ${message.body}`);
 
       // Handle message asynchronously
       messageHandler.handleMessage(message).catch((error) => {
         console.error('Error handling message:', error);
       });
 
-      // Respond to Twilio immediately (empty TwiML response)
-      res.set('Content-Type', 'text/xml');
-      res.send('<Response></Response>');
+      // Respond to WAHA immediately
+      res.status(200).json({ ok: true });
     } catch (error) {
       console.error('Webhook error:', error);
-      res.status(500).send('<Response></Response>');
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
   // Start the server
   const server = app.listen(config.server.port, config.server.host, () => {
     console.log(`\nServer listening on http://${config.server.host}:${config.server.port}`);
-    console.log(`\nWebhook URL for Twilio: http://YOUR_NGROK_URL/webhook\n`);
+    console.log(`\nWebhook URL for WAHA: http://<YOUR_BOT_HOST>:${config.server.port}/webhook\n`);
 
     // Start the reminder scheduler
     scheduler.start();
     console.log('Reminder scheduler started\n');
 
-    console.log('Bot is ready! Send a WhatsApp message to your Twilio number.\n');
+    console.log('Bot is ready! Link your WhatsApp in the WAHA dashboard, then send a message.\n');
   });
 
   // Graceful shutdown

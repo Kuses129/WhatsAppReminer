@@ -2,129 +2,106 @@
 
 A WhatsApp bot that reminds you of messages - just like Slack's "Remind Me" feature!
 
-Built with **Twilio** - no business verification, no extra phone needed.
+Built with **WAHA** (WhatsApp HTTP API) - use your own phone number, no business verification needed.
 
 ## How It Works
 
-1. You message the bot on WhatsApp
-2. Bot asks when you want to be reminded
-3. Pick a time (or type a custom one)
-4. Bot sends you the reminder when the time comes!
+1. You run WAHA in Docker and scan a QR code with your phone
+2. You message the bot on WhatsApp
+3. Bot asks when you want to be reminded
+4. Pick a time (or type a custom one)
+5. Bot sends you the reminder when the time comes!
 
 ---
 
 ## Setup Guide (Step by Step)
 
-### Step 1: Create a Twilio Account
+### Prerequisites
 
-1. Go to **https://www.twilio.com/try-twilio**
-2. Click **"Sign up"**
-3. Fill in your details:
-   - Email
-   - Password
-   - First name, Last name
-4. Verify your email (check inbox, click the link)
-5. Verify your phone number (Twilio sends a code)
-
-You now have **$15 free credit** to test with!
+- **Docker** installed ([Get Docker](https://docs.docker.com/get-docker/))
+- **Node.js 18+** installed (if running the bot outside Docker)
+- A phone with **WhatsApp** installed
 
 ---
 
-### Step 2: Get Your Twilio Credentials
+### Option A: Docker Compose (Recommended)
 
-1. After signing up, you'll land on the **Twilio Console**
-2. Look at the **"Account Info"** section on the dashboard
-3. You'll see:
-   - **Account SID** - starts with `AC` (copy this)
-   - **Auth Token** - click "Show" to reveal, then copy
+This runs both WAHA and the bot together.
 
-Save these somewhere - you'll need them soon.
-
----
-
-### Step 3: Activate WhatsApp Sandbox
-
-1. In the Twilio Console, click the search bar at the top
-2. Type **"WhatsApp"** and select **"Messaging > Try it out > Send a WhatsApp message"**
-   - Or go directly to: **https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn**
-3. You'll see the **WhatsApp Sandbox** page
-4. It shows a phone number like **+1 415 523 8886**
-5. It also shows a code like **"join <something-something>"**
-
-**Now, on your personal phone:**
-1. Open WhatsApp
-2. Add **+1 415 523 8886** (or the number shown) as a contact
-3. Send the message: `join <the-code-shown>` (e.g., `join hungry-cat`)
-4. You'll get a reply: "You're connected to the sandbox!"
-
-**Congratulations!** You've linked your phone to the Twilio sandbox.
-
----
-
-### Step 4: Install ngrok
-
-ngrok creates a public URL for your local server (so Twilio can reach it).
-
-**Option A: Download from website**
-1. Go to **https://ngrok.com**
-2. Sign up for free
-3. Download for your OS
-4. Unzip and install
-
-**Option B: Install via npm**
-```bash
-npm install -g ngrok
-```
-
-**Option C: Install via package manager**
-```bash
-# macOS
-brew install ngrok
-
-# Linux (snap)
-sudo snap install ngrok
-```
-
-**Get your ngrok auth token:**
-1. Go to **https://dashboard.ngrok.com/get-started/your-authtoken**
-2. Copy your authtoken
-3. Run this command:
-```bash
-ngrok config add-authtoken YOUR_TOKEN_HERE
-```
-
----
-
-### Step 5: Download and Configure the Bot
+#### Step 1: Clone and Configure
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/WhatsAppReminer.git
 cd WhatsAppReminer
 
-# Install dependencies
-npm install
-
-# Create your config file
+# Create your config
 cp .env.example .env
 ```
 
-**Edit the `.env` file** with your Twilio credentials:
-```
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=your_auth_token_here
-TWILIO_WHATSAPP_NUMBER=+14155238886
+Edit `docker-compose.yml` and change `your_api_key_here` to a secure key (use the same value in both services).
+
+#### Step 2: Start Everything
+
+```bash
+docker compose up -d
 ```
 
-- `TWILIO_ACCOUNT_SID` = Your Account SID from Step 2
-- `TWILIO_AUTH_TOKEN` = Your Auth Token from Step 2
-- `TWILIO_WHATSAPP_NUMBER` = The sandbox number from Step 3 (usually +14155238886)
+This starts:
+- **WAHA** on port `3001` (WhatsApp API + Dashboard)
+- **Bot** on port `3000` (your reminder bot)
+
+#### Step 3: Link Your WhatsApp
+
+1. Open the WAHA Dashboard: **http://localhost:3001/dashboard**
+2. Start a new session (or use the "default" session)
+3. A QR code will appear - scan it with your WhatsApp app
+   - On your phone: WhatsApp > Settings > Linked Devices > Link a Device
+4. Wait until the session status shows **WORKING**
+
+#### Step 4: Test It!
+
+Send a message from any WhatsApp contact to the number you just linked. The bot will respond!
 
 ---
 
-### Step 6: Start the Bot
+### Option B: Run Locally (Development)
 
-**Terminal 1 - Start the bot:**
+#### Step 1: Start WAHA
+
+```bash
+docker run -it --rm -p 3001:3000 \
+  -e WAHA_API_KEY=your_api_key_here \
+  -e WAHA_PRINT_QR=True \
+  -e WHATSAPP_HOOK_URL=http://host.docker.internal:3000/webhook \
+  -e WHATSAPP_HOOK_EVENTS=message,message.any \
+  devlikeapro/waha
+```
+
+> On Linux, replace `host.docker.internal` with your machine's local IP (e.g., `192.168.1.x`).
+
+#### Step 2: Link Your WhatsApp
+
+1. Open **http://localhost:3001/dashboard**
+2. Start the "default" session
+3. Scan the QR code with your WhatsApp app
+4. Wait for status: **WORKING**
+
+#### Step 3: Configure and Start the Bot
+
+```bash
+cd WhatsAppReminer
+npm install
+cp .env.example .env
+```
+
+Edit `.env`:
+```
+WAHA_API_URL=http://localhost:3001
+WAHA_API_KEY=your_api_key_here
+WAHA_SESSION=default
+```
+
+Start the bot:
 ```bash
 npm run build
 npm start
@@ -132,52 +109,18 @@ npm start
 
 You should see:
 ```
-WhatsApp Reminder Bot (Twilio)
-==============================
+WhatsApp Reminder Bot (WAHA)
+============================
 
 Database initialized
-Twilio client initialized
+WAHA client initialized (http://localhost:3001, session: default)
 
 Server listening on http://0.0.0.0:3000
 ```
 
-**Terminal 2 - Start ngrok:**
-```bash
-ngrok http 3000
-```
+#### Step 4: Test It!
 
-You'll see something like:
-```
-Forwarding    https://abc123.ngrok-free.app -> http://localhost:3000
-```
-
-**Copy that `https://....ngrok-free.app` URL!**
-
----
-
-### Step 7: Configure Twilio Webhook
-
-1. Go back to Twilio Console
-2. Navigate to: **Messaging > Try it out > Send a WhatsApp message**
-   - Or: https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn
-3. Scroll down to **"Sandbox Configuration"** (or click the "Sandbox settings" link)
-4. Find **"When a message comes in"**
-5. Enter your ngrok URL + `/webhook`:
-   ```
-   https://abc123.ngrok-free.app/webhook
-   ```
-6. Make sure the method is **POST**
-7. Click **"Save"**
-
----
-
-### Step 8: Test It!
-
-1. Open WhatsApp on your phone
-2. Send a message to the Twilio number: `Buy groceries`
-3. The bot should reply asking when to remind you!
-4. Reply with `1` (for 20 minutes) or type `in 2 hours`
-5. Wait for your reminder!
+Send a WhatsApp message to the phone number you linked. The bot will respond!
 
 ---
 
@@ -231,37 +174,20 @@ The bot understands:
 
 ---
 
-## Troubleshooting
-
-### "I sent a message but got no reply"
-- Is your bot running? (`npm start`)
-- Is ngrok running? (`ngrok http 3000`)
-- Did you set the webhook URL in Twilio?
-- Did you join the sandbox? (send `join xxx-xxx` to the Twilio number)
-
-### "Sandbox expired"
-The sandbox session expires after 72 hours of inactivity. Just send the `join xxx-xxx` message again.
-
-### "Invalid credentials"
-Double-check your `.env` file has the correct Account SID and Auth Token from Twilio Console.
-
-### "ngrok URL changed"
-Free ngrok URLs change every time you restart it. Update the webhook URL in Twilio Sandbox settings.
-
----
-
 ## Project Structure
 
 ```
 WhatsAppReminer/
 ├── src/
-│   ├── index.ts           # Express server & webhook
-│   ├── config.ts          # Environment configuration
-│   ├── twilio-client.ts   # Twilio API wrapper
-│   ├── database.ts        # SQLite for reminders
-│   ├── message-handler.ts # Message processing
+│   ├── index.ts              # Express server & webhook
+│   ├── config.ts             # Environment configuration
+│   ├── waha-client.ts        # WAHA HTTP API client
+│   ├── database.ts           # SQLite for reminders
+│   ├── message-handler.ts    # Message processing
 │   ├── reminder-scheduler.ts # Sends due reminders
-│   └── time-parser.ts     # Natural language time parsing
+│   └── time-parser.ts        # Natural language time parsing
+├── docker-compose.yml        # WAHA + Bot containers
+├── Dockerfile                # Bot container image
 ├── .env.example
 ├── package.json
 └── README.md
@@ -269,26 +195,46 @@ WhatsAppReminer/
 
 ---
 
+## Troubleshooting
+
+### "I sent a message but got no reply"
+- Is WAHA running? Check `http://localhost:3001/dashboard`
+- Is the session status **WORKING**? If not, re-scan the QR code
+- Is the bot running? (`npm start` or `docker compose logs bot`)
+- Check bot logs for incoming webhook events
+
+### "QR code expired"
+QR codes expire after a short time. Refresh the dashboard and scan again.
+
+### "Session disconnected"
+Your phone may have gone offline or WhatsApp was updated. Open the WAHA dashboard and restart the session, then re-scan the QR code.
+
+### "WAHA can't reach the bot webhook"
+- If using Docker Compose: both containers share a network, so `http://bot:3000/webhook` should work
+- If running locally: make sure the `WHATSAPP_HOOK_URL` uses your machine's IP, not `localhost` (from WAHA's perspective inside Docker, `localhost` is the container itself)
+
+---
+
 ## Costs
 
 | What | Cost |
 |------|------|
-| Twilio signup | Free ($15 credit) |
-| Per message sent | ~$0.005 |
-| Per message received | ~$0.005 |
-| ngrok (free tier) | Free |
+| WAHA (Core) | Free, unlimited |
+| Docker | Free |
+| Your phone number | You already have one! |
 
-$15 credit ≈ 1,500 messages. Plenty for personal use!
+No per-message fees. No API credits. Completely free for personal use.
 
 ---
 
 ## Going to Production
 
-For production (always-on, fixed URL):
-1. Deploy to a server (Railway, Render, DigitalOcean, AWS, etc.)
-2. Get a real domain or use the hosting provider's URL
-3. Update Twilio webhook to your production URL
-4. Consider upgrading from sandbox to a real Twilio WhatsApp number
+For production (always-on):
+1. Deploy to a server (VPS, DigitalOcean, AWS, etc.)
+2. Use `docker compose up -d` to run in background
+3. Set up a reverse proxy (nginx/Caddy) with HTTPS
+4. Change the `WAHA_API_KEY` to a strong secret
+5. Consider WAHA Plus for multi-session support
 
 ---
 

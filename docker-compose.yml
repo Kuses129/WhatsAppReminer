@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  # WAHA - WhatsApp HTTP API
+  # Dashboard: http://localhost:3001/dashboard
+  # Swagger:   http://localhost:3001/
+  waha:
+    image: devlikeapro/waha
+    container_name: waha
+    ports:
+      - "3001:3000"
+    environment:
+      # API authentication key - change this!
+      - WAHA_API_KEY=your_api_key_here
+      # Print QR code in console logs (handy for first-time setup)
+      - WAHA_PRINT_QR=True
+      # Restart sessions automatically after container restart
+      - WHATSAPP_RESTART_ALL_SESSIONS=True
+      # Send webhook events to the bot
+      - WHATSAPP_HOOK_URL=http://bot:3000/webhook
+      - WHATSAPP_HOOK_EVENTS=message,message.any
+    volumes:
+      - waha_sessions:/app/.sessions
+    restart: unless-stopped
+
+  # Reminder Bot
+  bot:
+    build: .
+    container_name: reminder-bot
+    ports:
+      - "3000:3000"
+    environment:
+      - WAHA_API_URL=http://waha:3000
+      - WAHA_API_KEY=your_api_key_here
+      - WAHA_SESSION=default
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DATABASE_PATH=/data/reminders.db
+    volumes:
+      - bot_data:/data
+    depends_on:
+      - waha
+    restart: unless-stopped
+
+volumes:
+  waha_sessions:
+  bot_data:

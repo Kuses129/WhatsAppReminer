@@ -1,4 +1,4 @@
-import { TwilioClient } from './twilio-client';
+import { WahaClient } from './waha-client';
 import { ReminderDatabase } from './database';
 import {
   parseTime,
@@ -7,13 +7,15 @@ import {
   formatRelativeTime,
 } from './time-parser';
 
-// Twilio webhook message format
-export interface TwilioMessage {
-  From: string; // e.g., "whatsapp:+1234567890"
-  To: string;
-  Body: string;
-  MessageSid: string;
-  NumMedia?: string;
+// WAHA webhook message payload
+export interface WahaMessage {
+  id: string;
+  from: string; // e.g., "1234567890@c.us"
+  fromMe: boolean;
+  to: string;
+  body: string;
+  hasMedia: boolean;
+  timestamp: number;
 }
 
 interface PendingReminder {
@@ -23,12 +25,12 @@ interface PendingReminder {
 }
 
 export class MessageHandler {
-  private client: TwilioClient;
+  private client: WahaClient;
   private db: ReminderDatabase;
   private pendingReminders: Map<string, PendingReminder> = new Map();
   private readonly PENDING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-  constructor(client: TwilioClient, db: ReminderDatabase) {
+  constructor(client: WahaClient, db: ReminderDatabase) {
     this.client = client;
     this.db = db;
 
@@ -36,10 +38,11 @@ export class MessageHandler {
     setInterval(() => this.cleanupExpiredPending(), 60000);
   }
 
-  async handleMessage(message: TwilioMessage): Promise<void> {
+  async handleMessage(message: WahaMessage): Promise<void> {
     try {
-      const userId = TwilioClient.normalizePhoneNumber(message.From);
-      const body = message.Body.trim();
+      // Use the "from" field as user ID (already in chatId format, e.g., "123@c.us")
+      const userId = message.from;
+      const body = message.body.trim();
 
       console.log(`Message from ${userId}: ${body}`);
 

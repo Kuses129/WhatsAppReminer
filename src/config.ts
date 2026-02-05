@@ -17,11 +17,11 @@ function optionalEnv(name: string, defaultValue: string): string {
 }
 
 export const config = {
-  // Twilio credentials
-  twilio: {
-    accountSid: requireEnv('TWILIO_ACCOUNT_SID'),
-    authToken: requireEnv('TWILIO_AUTH_TOKEN'),
-    whatsappNumber: requireEnv('TWILIO_WHATSAPP_NUMBER'),
+  // WAHA (WhatsApp HTTP API) settings
+  waha: {
+    apiUrl: optionalEnv('WAHA_API_URL', 'http://localhost:3001'),
+    apiKey: optionalEnv('WAHA_API_KEY', ''),
+    session: optionalEnv('WAHA_SESSION', 'default'),
   },
 
   // Server configuration
